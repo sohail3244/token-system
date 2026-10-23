@@ -1,0 +1,373 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum BusinessStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+}
+
+enum MemberStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum ServiceStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum TokenStatus {
+  WAITING
+  CALLED
+  SERVING
+  COMPLETED
+  SKIPPED
+  CANCELLED
+  NO_SHOW
+}
+
+enum TokenPriority {
+  NORMAL
+  PRIORITY
+  EMERGENCY
+}
+
+enum CounterStatus {
+  ACTIVE
+  INACTIVE
+  CLOSED
+}
+
+enum NotificationChannel {
+  IN_APP
+  SMS
+  EMAIL
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+model User {
+  id            String    @id @default(uuid())
+  name          String
+  email         String?   @unique
+  phone         String?   @unique
+  passwordHash  String
+  role          UserRole  @default(ADMIN)
+  isActive      Boolean   @default(true)
+  emailVerified Boolean   @default(false)
+  phoneVerified Boolean   @default(false)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  memberships   BusinessMember[]
+  createdTokens Token[]          @relation("TokenCreatedBy")
+  calledTokens  Token[]          @relation("TokenCalledBy")
+  tokenEvents   TokenEvent[]
+}
+
+model Business {
+  id        String         @id @default(uuid())
+  name      String
+  slug      String         @unique
+  type      String
+  email     String?
+  phone     String?
+  website   String?
+  logoUrl   String?
+  status    BusinessStatus @default(ACTIVE)
+  timezone  String         @default("Asia/Kolkata")
+  settings  Json?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  branches      Branch[]
+  memberships   BusinessMember[]
+  services      Service[]
+  customers     Customer[]
+  tokens        Token[]
+  subscriptions Subscription[]
+
+  @@index([status])
+  @@index([type])
+}
+
+model BusinessMember {
+  id         String       @id @default(uuid())
+  businessId String
+  userId     String
+  branchId   String?
+  role       UserRole
+  status     MemberStatus @default(ACTIVE)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch   Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@unique([businessId, userId])
+  @@index([userId, status])
+  @@index([businessId, role])
+  @@index([branchId])
+}
+
+model Branch {
+  id         String   @id @default(uuid())
+  businessId String
+  name       String
+  code       String
+  address    String?
+  city       String?
+  state      String?
+  postalCode String?
+  phone      String?
+  timezone   String?
+  isActive   Boolean  @default(true)
+  settings   Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business    Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  memberships BusinessMember[]
+  services    Service[]
+  counters    Counter[]
+  tokens      Token[]
+
+  @@unique([businessId, code])
+  @@index([businessId, isActive])
+}
+
+model Service {
+  id                   String        @id @default(uuid())
+  businessId           String
+  branchId             String?
+  name                 String
+  code                 String
+  description          String?
+  estimatedDurationMin Int           @default(10)
+  tokenPrefix          String
+  startingNumber       Int           @default(1)
+  resetDaily           Boolean       @default(true)
+  status               ServiceStatus @default(ACTIVE)
+  settings             Json?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch   Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  tokens   Token[]
+
+  @@unique([businessId, code, branchId])
+  @@index([businessId, status])
+  @@index([branchId, status])
+}
+
+model Counter {
+  id           String        @id @default(uuid())
+  branchId     String
+  name         String
+  code         String
+  status       CounterStatus @default(ACTIVE)
+  displayOrder Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  branch Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  tokens Token[]
+
+  @@unique([branchId, code])
+  @@index([branchId, status])
+}
+
+model Customer {
+  id         String   @id @default(uuid())
+  businessId String
+  name       String
+  phone      String
+  email      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tokens        Token[]
+  notifications Notification[]
+
+  @@unique([businessId, phone])
+  @@index([businessId, name])
+}
+
+model Token {
+  id          String  @id @default(uuid())
+  businessId  String
+  branchId    String
+  serviceId   String
+  customerId  String?
+  counterId   String?
+  createdById String?
+  calledById  String?
+
+  tokenNumber Int
+  displayCode String
+  queueDate   DateTime      @db.Date
+  status      TokenStatus   @default(WAITING)
+  priority    TokenPriority @default(NORMAL)
+
+  customerName  String?
+  customerPhone String?
+  notes         String?
+
+  position         Int?
+  estimatedWaitMin Int?
+  bookedAt         DateTime  @default(now())
+  calledAt         DateTime?
+  servingAt        DateTime?
+  completedAt      DateTime?
+  cancelledAt      DateTime?
+  skippedAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch   Branch    @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  service  Service   @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  counter  Counter?  @relation(fields: [counterId], references: [id], onDelete: SetNull)
+
+  createdBy User? @relation("TokenCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  calledBy  User? @relation("TokenCalledBy", fields: [calledById], references: [id], onDelete: SetNull)
+
+  events        TokenEvent[]
+  notifications Notification[]
+
+  @@unique([branchId, queueDate, tokenNumber])
+  @@index([businessId, queueDate, status])
+  @@index([branchId, queueDate, status])
+  @@index([serviceId, queueDate, status])
+  @@index([counterId, status])
+  @@index([customerId, createdAt])
+}
+
+model TokenEvent {
+  id         String   @id @default(uuid())
+  tokenId    String
+  actorId    String?
+  action     String
+  fromStatus String?
+  toStatus   String?
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  token Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([tokenId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model Notification {
+  id         String              @id @default(uuid())
+  tokenId    String?
+  customerId String?
+  channel    NotificationChannel
+  status     NotificationStatus  @default(PENDING)
+  recipient  String
+  subject    String?
+  message    String
+  sentAt     DateTime?
+  readAt     DateTime?
+  error      String?
+  createdAt  DateTime            @default(now())
+
+  token    Token?    @relation(fields: [tokenId], references: [id], onDelete: SetNull)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([tokenId])
+  @@index([customerId, createdAt])
+}
+
+model Subscription {
+  id                String             @id @default(uuid())
+  businessId        String
+  planName          String
+  status            SubscriptionStatus @default(TRIAL)
+  billingInterval   BillingInterval    @default(MONTHLY)
+  amount            Decimal            @default(0) @db.Decimal(12, 2)
+  currency          String             @default("INR")
+  maxBranches       Int                @default(1)
+  maxStaff          Int                @default(5)
+  startsAt          DateTime           @default(now())
+  endsAt            DateTime?
+  trialEndsAt       DateTime?
+  cancelledAt       DateTime?
+  provider          String?
+  providerReference String?
+  planId            String?
+  plan              Plan?              @relation(fields: [planId], references: [id], onDelete: SetNull)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, status])
+  @@index([endsAt])
+  @@index([planId])
+}
+
+model Plan {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  description String? @db.Text
+
+  billingInterval BillingInterval
+  price           Decimal         @db.Decimal(12, 2)
+  currency        String          @default("INR")
+
+  maxUsers        Int @default(5)
+  maxBranches     Int @default(1)
+  maxCounters     Int @default(2)
+  maxTokensPerDay Int @default(100)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions Subscription[]
+
+  @@index([isActive, billingInterval])
+}
